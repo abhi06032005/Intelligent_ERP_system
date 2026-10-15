@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   MessageSquare,
   Sparkles,
   X,
-  Minus,
   RefreshCw,
   Mic,
   MicOff,
@@ -39,6 +38,21 @@ interface SanitizedOrderContext {
   statusExplanation: string;
 }
 
+// The browser's Web Speech API; not in every browser, so it is looked up at runtime.
+interface Recognition {
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  lang: string;
+  onstart: (() => void) | null;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  abort: () => void;
+}
+type RecognitionCtor = new () => Recognition;
+
 interface ChatMessage {
   id: string;
   sender: 'buyer' | 'assistant';
@@ -66,7 +80,6 @@ export function BuyerChatbot() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentOrder, setCurrentOrder] = useState<SanitizedOrderContext | null>(null);
   const [activeOrders, setActiveOrders] = useState<SanitizedOrderContext[]>([]);
-  const [completedOrders, setCompletedOrders] = useState<SanitizedOrderContext[]>([]);
   const [selectedOrderIndex, setSelectedOrderIndex] = useState(0);
   const [hasActiveOrder, setHasActiveOrder] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -75,7 +88,7 @@ export function BuyerChatbot() {
   const [bannerError, setBannerError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<Recognition | null>(null);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -100,7 +113,9 @@ export function BuyerChatbot() {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
-      } catch {}
+      } catch {
+        // Already stopped.
+      }
       recognitionRef.current = null;
     }
     setIsListening(false);
@@ -119,10 +134,8 @@ export function BuyerChatbot() {
       }>('/buyer-chat/current-order');
 
       const activeList = data.activeOrders || (data.order ? [data.order] : []);
-      const completedList = data.completedOrders || [];
 
       setActiveOrders(activeList);
-      setCompletedOrders(completedList);
       setCurrentOrder(activeList[0] || null);
       setHasActiveOrder(activeList.length > 0);
 
@@ -152,7 +165,7 @@ export function BuyerChatbot() {
       if (messages.length === 0) {
         setMessages([initialGreeting]);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.warn('Failed to load current order from backend:', err);
       setBannerError('Connecting to LoomOS factory order service...');
       if (messages.length === 0) {
@@ -215,17 +228,14 @@ export function BuyerChatbot() {
         setCurrentOrder(data.orderSummary);
         setHasActiveOrder(data.hasActiveOrder);
       }
-      if (data.completedOrders) {
-        setCompletedOrders(data.completedOrders);
-      }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Chat error:', err);
       setMessages((prev) => [
         ...prev,
         {
           id: `ast-err-${Date.now()}`,
           sender: 'assistant',
-          text: `Error: ${err.message || 'Failed to process inquiry. Please try again.'}`,
+          text: `Error: ${err instanceof Error ? err.message : 'Failed to process inquiry. Please try again.'}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -241,20 +251,16 @@ export function BuyerChatbot() {
       return;
     }
 
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const w = window as Window & { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
+    const SpeechRecognition = w.SpeechRecognition || w.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       setBannerError('Voice input is not supported in this browser. Please use Google Chrome or Microsoft Edge, or type your query.');
       return;
     }
 
-    // Try requesting microphone access first
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
-      }
-    } catch {}
+    // Ask for the microphone up front so the permission prompt is not hidden behind recognition errors.
+    await navigator.mediaDevices?.getUserMedia({ audio: true }).catch(() => undefined);
 
     try {
       const recognition = new SpeechRecognition();
@@ -269,7 +275,7 @@ export function BuyerChatbot() {
         setBannerError(null);
       };
 
-      recognition.onresult = (event: any) => {
+      recognition.onresult = (event) => {
         let finalTranscript = '';
         let interimTranscript = '';
 
@@ -293,7 +299,7 @@ export function BuyerChatbot() {
         }
       };
 
-      recognition.onerror = (e: any) => {
+      recognition.onerror = (e) => {
         console.warn('Speech recognition event:', e.error);
         if (e.error === 'no-speech') {
           // Ignore no-speech silence
@@ -313,10 +319,10 @@ export function BuyerChatbot() {
       };
 
       recognition.start();
-    } catch (err: any) {
+    } catch (err) {
       setIsListening(false);
       recognitionRef.current = null;
-      setBannerError(`Failed to access microphone: ${err.message || 'Please check mic permissions.'}`);
+      setBannerError(`Failed to access microphone: ${err instanceof Error ? err.message : 'Please check mic permissions.'}`);
     }
   };
 
@@ -366,14 +372,6 @@ export function BuyerChatbot() {
                 aria-label="Refresh order"
               >
                 <RefreshCw size={14} />
-              </button>
-              <button
-                className="loomos-head-btn"
-                onClick={() => setIsOpen(false)}
-                title="Minimize"
-                aria-label="Minimize"
-              >
-                <Minus size={15} />
               </button>
               <button
                 className="loomos-head-btn"
@@ -467,7 +465,7 @@ export function BuyerChatbot() {
             {messages.map((m) => (
               <div key={m.id} className={`loomos-msg-row ${m.sender}`}>
                 <div className="loomos-msg-bubble">
-                  {cleanDisplayText(m.text)}
+                  {m.text}
                 </div>
                 <div className="loomos-msg-meta">
                   {m.sender === 'assistant' ? (

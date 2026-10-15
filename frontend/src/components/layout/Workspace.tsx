@@ -49,7 +49,7 @@ const sections: NavSection[] = [
     },
 ];
 export function Workspace() {
-    const { user, logout, demo } = useAuth();
+    const { user, logout } = useAuth();
     const location = useLocation();
     const [mobile, setMobile] = useState(false);
     const [search, setSearch] = useState(false);

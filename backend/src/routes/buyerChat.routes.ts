@@ -3,13 +3,14 @@ import { orderSummaries } from '../services/order.service.js';
 
 export const buyerChatRouter = Router();
 
-// Fallback Groq keys from environment
-const GROQ_KEYS = [
-  process.env.GROQ_API_KEY,
-  process.env.GROQ_FALLBACK_API_KEY,
-].filter(Boolean) as string[];
+// Dynamic Groq keys from environment
+function getGroqKeys(): string[] {
+  return [
+    process.env.GROQ_API_KEY,
+    process.env.GROQ_FALLBACK_API_KEY,
+  ].filter(Boolean) as string[];
+}
 
-const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
 // Helper to sanitize real database order for buyer chat
 function formatOrderForBuyer(order: any) {
@@ -235,8 +236,11 @@ CRITICAL BOUNDARIES & STRICT DOMAIN LOCK:
 
   // Call Groq LLM with key failover
   let answer: string | null = null;
-  for (let i = 0; i < GROQ_KEYS.length; i++) {
-    const apiKey = GROQ_KEYS[i];
+  const groqKeys = getGroqKeys();
+  const groqModel = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+
+  for (let i = 0; i < groqKeys.length; i++) {
+    const apiKey = groqKeys[i];
     try {
       const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -245,7 +249,7 @@ CRITICAL BOUNDARIES & STRICT DOMAIN LOCK:
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: GROQ_MODEL,
+          model: groqModel,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: question },

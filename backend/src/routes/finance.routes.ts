@@ -4,7 +4,7 @@ import * as contracts from '@loomos/shared';
 import { authorize } from '../middleware/auth.js';
 import { ensure, audit } from '../lib/domain.js';
 import { id, write, empty } from '../lib/route-helpers.js';
-import { financialReport, buyerPayment, createBill, payBill, createClaim, decideClaim } from '../services/finance.service.js';
+import { financialReport, buyerPayment, createBill, payBill, createClaim, decideClaim, remindBuyer } from '../services/finance.service.js';
 
 export const financeRouter = Router();
 
@@ -43,6 +43,16 @@ write(financeRouter, '/wages/pay-all', 'finance:manage', wageRunSchema, async (t
 // Record buyer invoice payment
 write(financeRouter, '/invoices/:id/payments', 'finance:manage', contracts.paymentSchema, (tx, input, actor, req) =>
   buyerPayment(tx, id(req), input, actor),
+);
+
+// Record a payment by picking the invoice, for when the money arrives before anyone opens the invoice list.
+write(financeRouter, '/payments', 'finance:manage', contracts.paymentSchema.extend({ invoiceId: z.string().min(1) }), (tx, { invoiceId, ...input }, actor) =>
+  buyerPayment(tx, invoiceId, input, actor),
+);
+
+// Remind a customer about their outstanding balance
+write(financeRouter, '/buyers/:id/remind', 'finance:manage', z.object({ note: z.string().trim().max(500).default('') }), (tx, input, actor, req) =>
+  remindBuyer(tx, id(req), input.note, actor),
 );
 
 // Bills from suppliers (yarn bills are created by receipts; everything else is entered here)

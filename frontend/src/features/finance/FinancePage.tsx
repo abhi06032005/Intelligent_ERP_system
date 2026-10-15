@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Bar, CartesianGrid, Legend, Line, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Wallet, ArrowDownLeft, AlertCircle, Plus, FileWarning, BadgeIndianRupee, Users, FileText } from 'lucide-react';
+import { Wallet, ArrowDownLeft, AlertCircle, Plus, FileWarning, BadgeIndianRupee, Users, FileText, BellRing, Mail } from 'lucide-react';
 import { factoryToday, type MonthMoney } from '@loomos/shared';
 import { billForm, billCategoryLabel, expenseForm } from '../forms/quickForms';
 import { useData, useLookups, useAction } from '../../hooks/useFactory';
@@ -33,6 +33,7 @@ export interface Finance {
   pnl: MonthMoney;
   trend: MonthMoney[];
   spendBreakdown: { key: string; name: string; value: number }[];
+  customers: { id: string; name: string; city: string; email: string; billed: Money; credits: Money; received: Money; outstanding: Money; overdue: Money; overdueCount: number; lastPaymentAt: string | null; lastReminderAt: string | null; invoices: { id: string; number: string; outstanding: Money; dueAt: string; overdue: boolean }[] }[];
   invoices: { id: string; number: string; buyer: string; buyerId: string; order: string; challan: string; total: Money; adjustment: Money; paid: Money; outstanding: Money; status: string; createdAt: string; dueAt: string | null; overdue: boolean }[];
   payments: { id: string; reference: string; amount: Money; createdAt: string; invoice: string; buyer: string; order: string }[];
   bills: { id: string; supplier: string; supplierId: string; number: string; category: string; description: string; fromReceipt: boolean; billDate: string; total: Money; paid: Money; outstanding: Money; dueAt: string; overdue: boolean }[];
@@ -42,7 +43,7 @@ export interface Finance {
   orders: { id: string; number: string; buyer: string; status: string; metres: Money; estimatedRevenue: Money; billed: Money; actualCost: Money; costPerMetre: Money; margin: Money; costs: { category: string; amount: Money }[] }[];
 }
 
-const tabs = ['Invoices', 'Payments', 'Bills to pay', 'Wages', 'Expenses', 'Claims', 'Order costs'];
+const tabs = ['Invoices', 'Customers', 'Payments', 'Bills to pay', 'Wages', 'Expenses', 'Claims', 'Order costs'];
 const short = (v: number) => (Math.abs(v) >= 100000 ? `₹${(v / 100000).toFixed(1)} L` : money(v));
 
 // The last twelve months, newest first, for the month picker.
@@ -74,6 +75,7 @@ export function FinancePage() {
     .filter((i) => !filters.values.status || (filters.values.status === 'OVERDUE' ? i.overdue : filters.values.status === 'OPEN' ? Number(i.outstanding) > 0 : i.status === filters.values.status));
   const payments = d.payments.filter((x) => !buyerName || x.buyer === buyerName);
   const claims = d.claims.filter((c) => !buyerName || c.who === buyerName).filter((c) => !filters.values.status || c.status === filters.values.status);
+  const customers = d.customers.filter((c) => !filters.values.buyerId || c.id === filters.values.buyerId);
   const bills = d.bills.filter((b) => !filters.values.status || (filters.values.status === 'OVERDUE' ? b.overdue : filters.values.status === 'OPEN' ? Number(b.outstanding) > 0 : Number(b.outstanding) === 0));
 
   const paymentForm = (inv: Finance['invoices'][number]): FormSpec => ({
@@ -86,6 +88,37 @@ export function FinancePage() {
     ],
     submit: 'Record payment',
   });
+
+  // Record money received by picking the invoice. Limited to one customer's invoices when opened from their row.
+  const receiveForm = (customer?: Finance['customers'][number]): FormSpec => {
+    const open = (customer ? [customer] : d.customers).flatMap((c) => c.invoices.map((i) => ({ value: i.id, label: `${i.number} · ${c.name} · ${money(i.outstanding)} outstanding` })));
+    return {
+      title: customer ? `Record payment from ${customer.name}` : 'Record a payment received',
+      description: customer ? `Outstanding ${money(customer.outstanding)} on ${customer.invoices.length} invoice${customer.invoices.length === 1 ? '' : 's'}.` : 'Money that has arrived from a customer against one of their invoices.',
+      path: '/payments',
+      fields: [
+        { name: 'invoiceId', label: 'Invoice', type: 'select', options: open, span: true },
+        { name: 'amount', label: 'Amount received (₹)', type: 'number', min: 0.01 },
+        { name: 'reference', label: 'Bank / cheque reference', hint: 'Must be unique: the same reference cannot be recorded twice.' },
+      ],
+      submit: 'Record payment',
+    };
+  };
+
+  const remindForm = (c: Finance['customers'][number]): FormSpec => ({
+    title: `Remind ${c.name}`,
+    description: `Sends a notice to their buyer portal: ${money(c.outstanding)} outstanding on ${c.invoices.map((i) => i.number).join(', ')}${c.overdueCount ? ` (${c.overdueCount} past due)` : ''}.`,
+    path: `/buyers/${c.id}/remind`,
+    fields: [{ name: 'note', label: 'Add a note', required: false, span: true, hint: 'Optional, e.g. a bank account or a date to pay by.' }],
+    submit: 'Send reminder',
+  });
+
+  // A ready-to-send email for customers who do not open the portal.
+  const reminderMailto = (c: Finance['customers'][number]) => {
+    const lines = c.invoices.map((i) => `${i.number}: ${money(i.outstanding)}${i.overdue ? ' (past due)' : ` (due ${date(i.dueAt)})`}`);
+    const body = `Dear ${c.name},\n\nA gentle reminder that ${money(c.outstanding)} is outstanding on your account:\n\n${lines.join('\n')}\n\nPlease arrange payment at your earliest convenience.\n\nThank you.`;
+    return `mailto:${encodeURIComponent(c.email)}?subject=${encodeURIComponent(`Payment reminder · ${money(c.outstanding)} outstanding`)}&body=${encodeURIComponent(body)}`;
+  };
 
   const payBillForm = (b: Finance['bills'][number]): FormSpec => ({
     title: `Pay ${b.supplier} · bill ${b.number}`,
@@ -136,7 +169,7 @@ export function FinancePage() {
     : [{ value: 'OPEN', label: 'Unpaid' }, { value: 'OVERDUE', label: 'Overdue' }, { value: 'PAID', label: 'Paid' }];
 
   const exportRows = () =>
-    tab === 'Invoices' ? invoices : tab === 'Payments' ? payments : tab === 'Claims' ? claims : tab === 'Expenses' ? d.expenseList : tab === 'Bills to pay' ? bills : tab === 'Wages' ? d.wageList : d.orders.map(({ costs, ...o }) => ({ ...o, ...Object.fromEntries(costs.map((c) => [c.category.toLowerCase(), c.amount])) }));
+    tab === 'Invoices' ? invoices : tab === 'Customers' ? customers.map(({ invoices: open, ...c }) => ({ ...c, openInvoices: open.length })) : tab === 'Payments' ? payments : tab === 'Claims' ? claims : tab === 'Expenses' ? d.expenseList : tab === 'Bills to pay' ? bills : tab === 'Wages' ? d.wageList : d.orders.map(({ costs, ...o }) => ({ ...o, ...Object.fromEntries(costs.map((c) => [c.category.toLowerCase(), c.amount])) }));
 
   return (
     <>
@@ -148,6 +181,7 @@ export function FinancePage() {
           </select>
         </label>
         <ExportButton onClick={() => exportCsv(`accounts-${tab.toLowerCase().replace(/ /g, '-')}`, exportRows())} />
+        <Button variant="outline" onClick={() => setSpec(receiveForm())}><ArrowDownLeft size={16} /> Record payment</Button>
         <Button variant="outline" onClick={() => setSpec(expenseForm())}><Plus size={16} /> Expense</Button>
         <Button onClick={() => setSpec(billForm(lookups.data))}><Plus size={16} /> Add bill</Button>
       </PageHeader>
@@ -207,11 +241,11 @@ export function FinancePage() {
             <button key={t} className={tab === t ? 'active' : ''} onClick={() => { setTab(t); filters.setValue('status', ''); }}>{t}</button>
           ))}
         </div>
-        {['Invoices', 'Payments', 'Claims', 'Bills to pay'].includes(tab) && (
+        {['Invoices', 'Customers', 'Payments', 'Claims', 'Bills to pay'].includes(tab) && (
           <FilterBar
             filters={[
               ...(tab === 'Bills to pay' ? [] : [{ name: 'buyerId', label: 'Customer', options: (lookups.data?.buyers ?? []).map((b) => ({ value: b.id, label: b.name })) }]),
-              ...(tab === 'Payments' ? [] : [{ name: 'status', label: 'Status', options: statusOptions }]),
+              ...(tab === 'Payments' || tab === 'Customers' ? [] : [{ name: 'status', label: 'Status', options: statusOptions }]),
             ]}
             values={filters.values} onChange={filters.setValue} onClear={filters.clear} active={filters.active}
           />
@@ -229,6 +263,24 @@ export function FinancePage() {
             { id: 'actions', header: '', cell: ({ row }) => Number(row.original.outstanding) > 0 ? <Button size="sm" onClick={() => setSpec(paymentForm(row.original))}><ArrowDownLeft size={14} /> Record payment</Button> : null },
           ]} />
         ) : <Empty title="No invoices" description="Invoices are raised when a dispatch is confirmed." />)}
+
+        {tab === 'Customers' && (customers.length ? (
+          <DataTable data={customers} columns={[
+            { accessorKey: 'name', header: 'Customer', cell: ({ row }) => <div className="cell-stack"><strong>{row.original.name}</strong><span>{row.original.city} · {row.original.email}</span></div> },
+            { accessorKey: 'billed', header: 'Billed', cell: ({ row }) => money(row.original.billed) },
+            { accessorKey: 'received', header: 'Received', cell: ({ row }) => <div className="cell-stack"><span>{money(row.original.received)}</span>{Number(row.original.credits) > 0 && <span>credit {money(row.original.credits)}</span>}</div> },
+            { accessorKey: 'outstanding', header: 'Still owed', cell: ({ row }) => <strong>{money(row.original.outstanding)}</strong> },
+            { accessorKey: 'overdue', header: 'Overdue', cell: ({ row }) => row.original.overdueCount ? <strong className="red-text">{money(row.original.overdue)} · {row.original.overdueCount}</strong> : <span className="muted">—</span> },
+            { accessorKey: 'lastPaymentAt', header: 'Last paid / reminded', cell: ({ row }) => <div className="cell-stack"><span>{row.original.lastPaymentAt ? date(row.original.lastPaymentAt) : 'Never paid'}</span><span>{row.original.lastReminderAt ? `reminded ${date(row.original.lastReminderAt)}` : ''}</span></div> },
+            { id: 'actions', header: '', cell: ({ row }) => Number(row.original.outstanding) > 0 ? (
+              <div className="record-actions">
+                <Button size="sm" onClick={() => setSpec(receiveForm(row.original))}><ArrowDownLeft size={14} /> Record payment</Button>
+                <Button size="sm" variant="outline" onClick={() => setSpec(remindForm(row.original))}><BellRing size={14} /> Remind</Button>
+                <Button size="sm" variant="outline" asChild><a href={reminderMailto(row.original)}><Mail size={14} /> Email</a></Button>
+              </div>
+            ) : <Badge value="PAID">Settled</Badge> },
+          ]} />
+        ) : <Empty title="No customers" />)}
 
         {tab === 'Payments' && (payments.length ? (
           <DataTable data={payments} columns={[

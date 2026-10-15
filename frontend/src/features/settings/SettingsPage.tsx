@@ -12,6 +12,9 @@ import { RoleManagementTab } from './RoleManagementTab';
 import { FactoryDepartmentTab } from './FactoryDepartmentTab';
 import { AuditLogTab } from './AuditLogTab';
 
+// Machines come back from lookups loosely typed; this is the shape the table shows.
+type MachineRow = { id: string; code: string; name: string; type: string; location: string; capacityPerHour: string; status: string; active: boolean; departmentId?: string | null };
+
 export function SettingsPage() {
   const [tab, setTab] = useState('Team access');
   const lookups = useLookups();
@@ -79,27 +82,27 @@ export function SettingsPage() {
           }
         >
           <DataTable
-            data={lookups.data?.machines ?? []}
+            data={(lookups.data?.machines ?? []) as MachineRow[]}
             columns={[
-              { accessorKey: 'code', header: 'Machine code', cell: ({ row }) => <strong>{(row.original as any).code}</strong> },
+              { accessorKey: 'code', header: 'Machine code', cell: ({ row }) => <strong>{row.original.code}</strong> },
               { accessorKey: 'name', header: 'Name' },
               {
                 accessorKey: 'type',
                 header: 'Stage',
-                cell: ({ row }) => <Badge value={(row.original as any).type}>{label((row.original as any).type)}</Badge>,
+                cell: ({ row }) => <Badge value={row.original.type}>{label(row.original.type)}</Badge>,
               },
               { accessorKey: 'location', header: 'Floor location' },
               {
                 accessorKey: 'capacityPerHour',
                 header: 'Capacity (m/h)',
-                cell: ({ row }) => `${number((row.original as any).capacityPerHour)} m/h`,
+                cell: ({ row }) => `${number(row.original.capacityPerHour)} m/h`,
               },
               {
                 accessorKey: 'status',
                 header: 'Status',
                 cell: ({ row }) => (
-                  <Badge value={(row.original as any).active ? (row.original as any).status : 'OFFLINE'}>
-                    {(row.original as any).active ? label((row.original as any).status) : 'Deactivated'}
+                  <Badge value={row.original.active ? row.original.status : 'OFFLINE'}>
+                    {row.original.active ? label(row.original.status) : 'Deactivated'}
                   </Badge>
                 ),
               },
@@ -110,7 +113,7 @@ export function SettingsPage() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => setSpec(machineForm(lookups.data, row.original as any))}
+                    onClick={() => setSpec(machineForm(lookups.data, row.original))}
                   >
                     Edit
                   </Button>

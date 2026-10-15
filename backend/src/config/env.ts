@@ -17,4 +17,7 @@ export const env = {
   origin: configuredOrigin,
   allowedOrigins,
   production: process.env.NODE_ENV === 'production',
+  groqApiKey: process.env.GROQ_API_KEY,
+  groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
 };
+

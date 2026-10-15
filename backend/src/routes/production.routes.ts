@@ -25,9 +25,10 @@ export const productionRouter = Router();
 // Read a text filter from the query string ("" and missing both mean "no filter").
 const q = (req: Request, name: string) => (req.query[name] ? String(req.query[name]) : undefined);
 
-// Floor job cards. Stage operators only ever receive their own stage's jobs.
+// Floor job cards. Active & waiting jobs always appear first, followed by recent completed jobs.
 productionRouter.get('/', authorize('production'), async (req, res) => {
-  const stage = contracts.stageForRole(req.actor.role) ?? q(req, 'stage');
+  const stageParam = q(req, 'stage');
+  const stage = stageParam && stageParam !== 'ALL' ? stageParam : undefined;
   const where: Prisma.JobCardWhereInput = {
     status: { not: 'CANCELLED' },
     production: { status: { not: 'CANCELLED' } },
@@ -38,22 +39,35 @@ productionRouter.get('/', authorize('production'), async (req, res) => {
   if (q(req, 'buyerId')) where.production = { ...(where.production as object), order: { buyerId: q(req, 'buyerId') } };
   if (q(req, 'orderId')) where.production = { ...(where.production as object), orderId: q(req, 'orderId') };
 
-  const jobs = await db.jobCard.findMany({
-    where,
-    include: {
-      machine: { select: { id: true, name: true, code: true, type: true, status: true } },
-      worker: { select: { id: true, name: true } },
-      shift: { select: { id: true, name: true } },
-      production: {
-        include: {
-          order: { include: { buyer: true } },
-          reservations: { include: { lot: true } },
-          jobs: { select: { sequence: true, stage: true, status: true } },
-        },
+  const jobInclude = {
+    machine: { select: { id: true, name: true, code: true, type: true, status: true } },
+    worker: { select: { id: true, name: true } },
+    shift: { select: { id: true, name: true } },
+    production: {
+      include: {
+        order: { include: { buyer: true } },
+        reservations: { include: { lot: true } },
+        jobs: { select: { sequence: true, stage: true, status: true } },
       },
     },
-    orderBy: [{ productionId: 'asc' }, { sequence: 'asc' }],
-  });
+  };
+
+  // Active / waiting jobs first so they are never pushed off page by completed historical jobs
+  const [activeJobs, completedJobs] = await Promise.all([
+    db.jobCard.findMany({
+      where: { ...where, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
+      include: jobInclude,
+      orderBy: [{ sequence: 'asc' }, { id: 'desc' }],
+    }),
+    db.jobCard.findMany({
+      where: { ...where, status: 'COMPLETED' },
+      include: jobInclude,
+      orderBy: [{ endedAt: 'desc' }, { sequence: 'asc' }],
+      take: 100,
+    }),
+  ]);
+
+  const jobs = [...activeJobs, ...completedJobs];
 
   res.json(
     page(

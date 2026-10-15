@@ -37,21 +37,26 @@ export function useLiveUpdates() {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    const source = new EventSource('/api/v1/events', { withCredentials: true });
+    let source: EventSource | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false); // the browser retries automatically
+    // Short delay on initial mount to allow backend API server to finish booting
+    const startDelay = setTimeout(() => {
+      source = new EventSource('/api/v1/events', { withCredentials: true });
 
-    source.onmessage = () => {
-      // Several changes often arrive together; refresh once.
-      clearTimeout(timer);
-      timer = setTimeout(() => void client.invalidateQueries(), 250);
-    };
+      source.onopen = () => setConnected(true);
+      source.onerror = () => setConnected(false);
+
+      source.onmessage = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => void client.invalidateQueries(), 250);
+      };
+    }, 400);
 
     return () => {
+      clearTimeout(startDelay);
       clearTimeout(timer);
-      source.close();
+      source?.close();
     };
   }, [client]);
 

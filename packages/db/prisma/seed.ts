@@ -289,10 +289,18 @@ async function seed() {
     const machines = await Promise.all([
       tx.machine.create({ data: { code: 'SP-01', name: 'Ring spinning frame 01', type: 'SPINNING', location: 'Spinning hall · Bay 1', capacityPerHour: 150, hourlyCost: 180, status: 'IDLE', factoryId: factory.id, departmentId: depts['SPINNING'] } }),
       tx.machine.create({ data: { code: 'SP-02', name: 'Ring spinning frame 02', type: 'SPINNING', location: 'Spinning hall · Bay 2', capacityPerHour: 150, hourlyCost: 180, status: 'IDLE', factoryId: factory.id, departmentId: depts['SPINNING'] } }),
+      tx.machine.create({ data: { code: 'SP-03', name: 'Open-end rotor spinner 03', type: 'SPINNING', location: 'Spinning hall · Bay 3', capacityPerHour: 180, hourlyCost: 210, status: 'IDLE', factoryId: factory.id, departmentId: depts['SPINNING'] } }),
+      tx.machine.create({ data: { code: 'SP-04', name: 'Compact spinning frame 04', type: 'SPINNING', location: 'Spinning hall · Bay 4', capacityPerHour: 160, hourlyCost: 195, status: 'IDLE', factoryId: factory.id, departmentId: depts['SPINNING'] } }),
       tx.machine.create({ data: { code: 'LM-01', name: 'Rapier loom 01', type: 'WEAVING', location: 'Weaving shed · Bay 1', capacityPerHour: 120, hourlyCost: 200, status: 'IDLE', factoryId: factory.id, departmentId: depts['WEAVING'] } }),
       tx.machine.create({ data: { code: 'LM-02', name: 'Air-jet loom 02', type: 'WEAVING', location: 'Weaving shed · Bay 2', capacityPerHour: 140, hourlyCost: 220, status: 'IDLE', factoryId: factory.id, departmentId: depts['WEAVING'] } }),
+      tx.machine.create({ data: { code: 'LM-03', name: 'High-speed Rapier loom 03', type: 'WEAVING', location: 'Weaving shed · Bay 3', capacityPerHour: 135, hourlyCost: 215, status: 'IDLE', factoryId: factory.id, departmentId: depts['WEAVING'] } }),
+      tx.machine.create({ data: { code: 'LM-04', name: 'Air-jet loom 04', type: 'WEAVING', location: 'Weaving shed · Bay 4', capacityPerHour: 150, hourlyCost: 230, status: 'IDLE', factoryId: factory.id, departmentId: depts['WEAVING'] } }),
+      tx.machine.create({ data: { code: 'LM-05', name: 'Jacquard electronic loom 05', type: 'WEAVING', location: 'Weaving shed · Bay 5', capacityPerHour: 110, hourlyCost: 250, status: 'IDLE', factoryId: factory.id, departmentId: depts['WEAVING'] } }),
+      tx.machine.create({ data: { code: 'LM-06', name: 'Sulzer projectile loom 06', type: 'WEAVING', location: 'Weaving shed · Bay 6', capacityPerHour: 145, hourlyCost: 225, status: 'IDLE', factoryId: factory.id, departmentId: depts['WEAVING'] } }),
       tx.machine.create({ data: { code: 'DY-01', name: 'Jet dyeing machine 01', type: 'DYEING', location: 'Processing hall · Bay 1', capacityPerHour: 100, hourlyCost: 260, status: 'IDLE', factoryId: factory.id, departmentId: depts['DYEING'] } }),
       tx.machine.create({ data: { code: 'DY-02', name: 'Soft flow dyeing machine 02', type: 'DYEING', location: 'Processing hall · Bay 2', capacityPerHour: 110, hourlyCost: 280, status: 'IDLE', factoryId: factory.id, departmentId: depts['DYEING'] } }),
+      tx.machine.create({ data: { code: 'DY-03', name: 'Jigger HT dyeing unit 03', type: 'DYEING', location: 'Processing hall · Bay 3', capacityPerHour: 125, hourlyCost: 290, status: 'IDLE', factoryId: factory.id, departmentId: depts['DYEING'] } }),
+      tx.machine.create({ data: { code: 'DY-04', name: 'Beam atmospheric vessel 04', type: 'DYEING', location: 'Processing hall · Bay 4', capacityPerHour: 115, hourlyCost: 275, status: 'IDLE', factoryId: factory.id, departmentId: depts['DYEING'] } }),
     ]);
 
     // ---------- Five months of history (orders, receipts, bills, wages, breakdowns) ----------

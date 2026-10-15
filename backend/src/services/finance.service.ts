@@ -1,6 +1,7 @@
 import { db, Prisma, type Tx } from '@loomos/db';
 import { factoryToday, type BillInput } from '@loomos/shared';
 import { audit, code, D, ensure, sum, type Actor } from '../lib/domain.js';
+import { notify } from './notification.service.js';
 
 // Accounts: buyer payments, supplier bills, wages, expenses and claims, and the monthly
 // "did we make money?" view. All numbers come from recorded transactions.
@@ -11,6 +12,9 @@ const IST = 'Asia/Kolkata';
 // Money still owed on an invoice after payments and approved claim credits.
 const outstandingOf = (i: { total: Prisma.Decimal; adjustment: Prisma.Decimal; payments: { amount: Prisma.Decimal }[] }) =>
   Prisma.Decimal.max(i.total.minus(i.adjustment).minus(sum(i.payments.map((p) => p.amount))), 0);
+
+// Invoices fall due 30 days after dispatch unless a date was set.
+const dueOf = (i: { dueAt: Date | null; createdAt: Date }) => i.dueAt ?? new Date(i.createdAt.getTime() + 30 * DAY);
 
 const billOutstanding = (b: { total: Prisma.Decimal; payments: { amount: Prisma.Decimal }[] }) =>
   Prisma.Decimal.max(b.total.minus(sum(b.payments.map((p) => p.amount))), 0);
@@ -136,6 +140,53 @@ export async function decideClaim(tx: Tx, id: string, input: { decision: string;
   return result;
 }
 
+// Each customer's account: everything invoiced to them, what they have paid and what is still owed.
+// Balances ignore the month filter, because money owed from an earlier month is still owed.
+export async function customerBalances() {
+  const now = new Date();
+  const [buyers, invoices, reminders] = await Promise.all([
+    db.buyer.findMany({ orderBy: { name: 'asc' } }),
+    db.invoice.findMany({ where: { status: { not: 'VOID' } }, include: { payments: true, shipment: { select: { order: { select: { buyerId: true } } } } } }),
+    db.auditLog.findMany({ where: { action: 'finance.reminder' }, orderBy: { createdAt: 'desc' }, distinct: ['entityId'], select: { entityId: true, createdAt: true } }),
+  ]);
+  return buyers.map((b) => {
+    const mine = invoices.filter((i) => i.shipment.order.buyerId === b.id);
+    const open = mine.filter((i) => outstandingOf(i).gt(0));
+    const overdue = open.filter((i) => dueOf(i) < now);
+    const paymentDates = mine.flatMap((i) => i.payments.map((p) => p.createdAt.getTime()));
+    return {
+      id: b.id,
+      name: b.name,
+      city: b.city,
+      email: b.email,
+      billed: sum(mine.map((i) => i.total)),
+      credits: sum(mine.map((i) => i.adjustment)),
+      received: sum(mine.flatMap((i) => i.payments.map((p) => p.amount))),
+      outstanding: sum(open.map(outstandingOf)),
+      overdue: sum(overdue.map(outstandingOf)),
+      overdueCount: overdue.length,
+      lastPaymentAt: paymentDates.length ? new Date(Math.max(...paymentDates)) : null,
+      lastReminderAt: reminders.find((r) => r.entityId === b.id)?.createdAt ?? null,
+      invoices: open.map((i) => ({ id: i.id, number: i.number, outstanding: outstandingOf(i), dueAt: dueOf(i), overdue: dueOf(i) < now })),
+    };
+  });
+}
+
+// Tell a customer what they still owe: an in-app notice to their portal users, recorded on the account.
+export async function remindBuyer(tx: Tx, buyerId: string, note: string, actor: Actor) {
+  const buyer = await tx.buyer.findUnique({ where: { id: buyerId }, include: { users: { where: { active: true, approvalStatus: 'APPROVED' }, select: { id: true } } } });
+  ensure(buyer, 'Customer not found.', 404);
+  const invoices = await tx.invoice.findMany({ where: { status: { not: 'VOID' }, shipment: { order: { buyerId } } }, include: { payments: true } });
+  const owed = invoices.filter((i) => outstandingOf(i).gt(0));
+  const total = sum(owed.map(outstandingOf));
+  ensure(total.gt(0), `${buyer.name} has nothing outstanding.`);
+  const overdue = owed.filter((i) => dueOf(i) < new Date()).length;
+  const message = `₹${total.toFixed(2)} is outstanding on ${owed.map((i) => i.number).join(', ')}${overdue ? ` (${overdue} past due)` : ''}.${note ? ` ${note}` : ''}`;
+  await notify(tx, { userIds: buyer.users.map((u) => u.id), title: 'Payment reminder', message, category: 'PAYMENT', link: '/buyer' });
+  await audit(tx, actor, 'finance.reminder', buyerId, message);
+  return { recipients: buyer.users.length, outstanding: total, invoices: owed.length };
+}
+
 // Profit and loss for one or more months: sales against raw material bills, other bills,
 // wages and expenses. "Spend" is what the month cost the mill; "cash" is what actually moved.
 async function monthlyMoney(months: string[]) {
@@ -189,7 +240,7 @@ export async function financialReport(month?: string) {
   const now = new Date();
   const pnlMonth = month ?? factoryToday().slice(0, 7);
 
-  const [invoices, payments, costs, expenses, bills, wages, orders, claims, trend] = await Promise.all([
+  const [invoices, payments, costs, expenses, bills, wages, orders, claims, trend, customers] = await Promise.all([
     db.invoice.findMany({ where: { status: { not: 'VOID' }, createdAt }, include: { payments: true, shipment: { include: { order: { include: { buyer: true } } } } }, orderBy: { createdAt: 'desc' } }),
     db.buyerPayment.findMany({ where: { createdAt }, include: { invoice: { include: { shipment: { include: { order: { include: { buyer: true } } } } } } }, orderBy: { createdAt: 'desc' } }),
     db.costAllocation.findMany({ where: { createdAt } }),
@@ -203,6 +254,7 @@ export async function financialReport(month?: string) {
     db.salesOrder.findMany({ include: { buyer: true, items: true, costs: true, shipments: { include: { invoice: true } } }, orderBy: { createdAt: 'desc' } }),
     db.claim.findMany({ include: { buyer: true, supplier: true, invoice: { select: { number: true } }, order: { select: { number: true } } }, orderBy: { createdAt: 'desc' } }),
     monthlyMoney(previousMonths(pnlMonth, 6)),
+    customerBalances(),
   ]);
 
   const billed = sum(invoices.map((i) => i.total));
@@ -210,7 +262,6 @@ export async function financialReport(month?: string) {
   const cost = sum(costs.map((c) => c.amount));
   const overhead = sum(expenses.map((e) => e.amount));
   const openInvoices = invoices.filter((i) => outstandingOf(i).gt(0));
-  const dueOf = (i: { dueAt: Date | null; createdAt: Date }) => i.dueAt ?? new Date(i.createdAt.getTime() + 30 * DAY);
   const overdue = openInvoices.filter((i) => dueOf(i) < now);
   const openBills = bills.filter((b) => billOutstanding(b).gt(0));
   const pnl = trend[trend.length - 1];
@@ -240,6 +291,7 @@ export async function financialReport(month?: string) {
       { key: 'WAGES', name: 'Worker wages', value: pnl.wages },
       { key: 'EXPENSES', name: 'Other expenses', value: pnl.expenses },
     ],
+    customers,
     invoices: invoices.map((i) => ({
       id: i.id, number: i.number, buyer: i.shipment.order.buyer.name, buyerId: i.shipment.order.buyerId, order: i.shipment.order.number, challan: i.shipment.number,
       total: i.total, adjustment: i.adjustment, paid: sum(i.payments.map((p) => p.amount)), outstanding: outstandingOf(i),

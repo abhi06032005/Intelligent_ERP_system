@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, ArrowDown, Layers, Package, Factory, Workflow, ShieldCheck, Truck, Wallet, Users,
-  QrCode, KeyRound, Smartphone, Activity, ShoppingBag, UserRound, Play, Check,
+  QrCode, KeyRound, Smartphone, Activity, ShoppingBag, UserRound, Check,
 } from 'lucide-react';
 import { createThreadScene, type ThreadScene } from './threads';
 import { DashboardMock } from './DashboardMock';
